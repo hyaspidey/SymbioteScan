@@ -10,29 +10,46 @@ from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 
 
-def train_model(data_path, target_column="bot_label"):
-    """Train, evaluate, and save the bot detection model."""
+def train_model(
+    data_path="data/combined_features.csv",
+    target_column="Type"
+):
+    """Train and evaluate the bot detection model."""
 
-    # Load dataset
     data = pd.read_csv(data_path)
 
-    # Check target column
     if target_column not in data.columns:
         raise ValueError(
             f"Target column '{target_column}' not found."
         )
 
-    # Separate features and labels
-    X = data.drop(columns=[target_column])
-    y = data[target_column]
+    # Separate target and behavioral features.
+    y = data[target_column].astype(str).str.strip()
 
-    # Keep numeric features for this starter model
+    if not set(y.unique()).issubset({"Human", "Bot"}):
+        raise ValueError("Unexpected target labels found.")
+
+    X = data.drop(columns=[target_column])
+
+    # Exclude identifiers and potentially identifying fields.
+    X = X.drop(
+        columns=[
+            col for col in X.columns
+            if col.lower() in ["actor", "a_acc"]
+            or "ip" in col.lower()
+        ],
+        errors="ignore"
+    )
+
+    # Use numeric behavioral features only.
     X = X.select_dtypes(include=["number"])
 
     if X.empty:
-        raise ValueError("No numeric feature columns found.")
+        raise ValueError("No numeric features found.")
 
-    # Split dataset
+    if X.columns.duplicated().any():
+        raise ValueError("Duplicate feature names found.")
+
     X_train, X_test, y_train, y_test = train_test_split(
         X,
         y,
@@ -41,30 +58,42 @@ def train_model(data_path, target_column="bot_label"):
         stratify=y
     )
 
-    # Build model pipeline
     model = Pipeline([
         ("imputer", SimpleImputer(strategy="median")),
         ("classifier", RandomForestClassifier(
             n_estimators=100,
             random_state=42,
-            class_weight="balanced"
+            class_weight="balanced",
+            n_jobs=-1
         ))
     ])
 
-    # Train model
     model.fit(X_train, y_train)
 
-    # Evaluate model
     predictions = model.predict(X_test)
 
     print("Training complete!")
     print("Accuracy:", accuracy_score(y_test, predictions))
-    print("\nClassification Report:")
-    print(classification_report(y_test, predictions))
 
-    # Save model
-    joblib.dump(model, "symbiotescan_model.pkl")
+    print("\nClassification Report:")
+    print(classification_report(
+        y_test,
+        predictions,
+        zero_division=0
+    ))
+
+    joblib.dump(
+        {
+            "model": model,
+            "feature_columns": list(X.columns)
+        },
+        "symbiotescan_model.pkl"
+    )
 
     print("\nModel saved successfully!")
 
     return model
+
+
+if __name__ == "__main__":
+    train_model()
